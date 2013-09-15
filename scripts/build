@@ -17,28 +17,33 @@ function melpa {
     echo "building..." >> $WEBROOT/status.txt
 
     MELPADIR=${MELPADIR:-$HOME/melpa}
-    MELPABRANCH=${MELPABRANCH:-master}
+    MELPABRANCH=${MELPABRANCH:-`git rev-parse --abbrev-ref HEAD`}
 
     PATH=$HOME/.cabal/bin:$HOME/usr/bin:$HOME/bin:$PATH
 
     [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm"
 
-    ENVLOG=$HOME/log/melpaenv.log
-    env > ${ENVLOG}
-
     STDOUT=`mktemp`
     STDERR=`mktemp`
 
+    env &>> ${STDOUT}
+
     ## git pull
     cd ${MELPADIR}
+    git fetch origin &>> ${STDOUT}
+    git reset --hard origin/${MELPABRANCH} &>> ${STDOUT}
     git pull origin ${MELPABRANCH} &>> ${STDOUT}
     echo >> ${STDOUT}
 
-    MELPASTDOUT=`mktemp`
-
     ## run the script
     cd ${MELPADIR}
-    make 1>> ${MELPASTDOUT} 2>> ${STDERR}
+    grep --files-with-match wiki recipes/* | xargs make -j1 &
+    grep --files-without-match wiki recipes/* | xargs make -j4
+    wait
+
+    make packages/archive-contents
+    make json
+    make index
 
     ## sync to the web directory
     rsync -avz --delete ${MELPADIR}/packages ${MELPADIR}/html/. ${WEBROOT}/ 1>> ${STDOUT} 2>> ${STDERR}
@@ -49,7 +54,8 @@ function melpa {
 
     EMAIL=`mktemp`
     echo "Subject: Melpa status `timestamp`" > ${EMAIL}
-    cat ${MELPASTDOUT} ${STDOUT} ${ENVLOG} ${STDERR} >> ${EMAIL}
+    bash missing.el >> ${EMAIL}
+    # cat ${STDOUT} ${STDERR} >> ${EMAIL}
 
     /usr/sbin/sendmail dcurtis@milkbox.net < ${EMAIL}
     cat ${ENVLOG} ${STDERR} ${STDOUT} | tee $WEBROOT/lastrun.txt
@@ -59,9 +65,4 @@ function melpa {
     echo '{"completed":' `unix_timestamp` '}' > $WEBROOT/build-status.json
 }
 
-if [[ `cat $WEBROOT/updatemelpa.txt` == 1 ]] ; then
-        echo "Running MELPA"
-        echo "2" > $WEBROOT/updatemelpa.txt
-        melpa
-        echo "0" > $WEBROOT/updatemelpa.txt
-fi
+melpa
